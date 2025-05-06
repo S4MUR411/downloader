@@ -1,52 +1,74 @@
-name: Wiki Auto Downloader
+# Define the name of this GitHub Action workflow
+name: Wiki Torrent Seeder
 
+# This workflow is triggered when changes are made to the GitHub Wiki (pages edited)
 on:
   gollum # Trigger when wiki pages are edited
 
+# Define a single job called "torrent-seeder"
 jobs:
-  download-from-wiki:
+  torrent-seeder:
+    # Run this job on a virtual machine running Ubuntu (latest version)
     runs-on: ubuntu-latest
+
+    # Grant minimal required permissions
     permissions:
-      actions: write
-      contents: read
+      contents: read  # Allow reading repository content (e.g., for cloning)
+
+    # List of steps to execute in this job
     steps:
+
+      # Step 1: Install aria2 — a powerful download utility that supports torrents and magnet links
       - name: Install aria2
         run: |
-          sudo apt update
-          sudo apt install -y aria2
+          sudo apt update         # Update package list
+          sudo apt install -y aria2 # Install aria2
 
+      # Step 2: Clone the GitHub Wiki repository associated with this repo
       - name: Clone Wiki Repository
         run: |
           git clone "https://github.com/${GITHUB_REPOSITORY}.wiki.git"
 
+      # Step 3: Find which .md file was most recently updated in the wiki
       - name: Find Updated Markdown File
         id: find_md
         run: |
+          # Extract the wiki directory name from the repo name
           WIKI_DIR=$(echo $GITHUB_REPOSITORY | cut -d "/" -f 2).wiki
+
+          # Go into the cloned wiki folder
           cd "$WIKI_DIR"
+
+          # Get the name of the most recently modified .md file using git log
           MD_FILE=$(git log --pretty=format: -1 --name-only *.md | grep '\.md$' | head -n1)
+
+          # Save it as an environment variable for later use
           echo "MD_FILE=$MD_FILE" >> $GITHUB_ENV
+
+          # Go back to the main directory
           cd ..
+
+          # Print out the found file for debugging
           echo "Found updated markdown file: $MD_FILE"
 
+      # Step 4: Create a directory where downloaded files will be stored
       - name: Create downloads directory
         run: mkdir -p ./downloads
 
-      - name: Download Files with aria2
+      # Step 5: Start downloading and seeding the file(s) listed in the markdown file
+      - name: Start Aria2c Torrent Download + Seeding
         run: |
-          WIKI_DIR=$(echo $GITHUB_REPOSITORY | cut -d "/" -f 2).wiki
           aria2c \
-            --dir=./downloads \
-            --input-file="$WIKI_DIR/${{ env.MD_FILE }}" \
-            --allow-overwrite=true \
-            --continue=true \
-            --max-concurrent-downloads=3
+            --dir=./downloads \                 # Set download directory
+            --listen-port=6881 \                # Port for incoming peer connections
+            --enable-dht=true \                 # Enable DHT (peer discovery)
+            --enable-peer-exchange=true \       # Enable Peer Exchange (PEX)
+            --bt-enable-lpd=true \              # Enable Local Peer Discovery
+            --follow-torrent=true \             # Automatically open .torrent or magnet links
+            --seed-time=1 \                     # Seed for 1 minute after download
+            --max-upload-limit=50K \            # Limit upload speed to 50KB/s
+            --file-allocation=none \            # Don't pre-allocate space for files
+            --summary-interval=10 \             # Show progress every 10 seconds
+            "$WIKI_DIR/${{ env.MD_FILE }}"     # The file containing URLs/magnet/torrents
 
-      - name: List downloaded files
-        run: ls -la ./downloads
-
-      - name: Upload artifact for download
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-files
-          path: ./downloads/
+        timeout-minutes: 30                     # Stop this step if it runs longer than 30 minutes
