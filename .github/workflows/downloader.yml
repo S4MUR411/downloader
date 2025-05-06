@@ -1,36 +1,52 @@
-name: AutoDownloader
+name: Wiki Auto Downloader
+
 on:
-  gollum
+  gollum # Trigger when wiki pages are edited
+
 jobs:
-  AutoDownloaderProcess:
+  download-from-wiki:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
-    - uses: actions/checkout@v2.1.0
-    - name: Rclone Install
-      run: curl https://rclone.org/install.sh | sudo bash
-    - name: Aria2 Install
-      run: sudo apt install -y aria2
-    - name: Inject Rclone&Aria2 config
-      run: |
-        mkdir -p ~/.config/rclone/
-        cat >  ~/.config/rclone/rclone.conf  << EOF
-        ${{ secrets.RCLONE_CONF }}
-        EOF
-        mkdir -p ~/.aria2/
-        cat >  ~/.aria2/aria2.conf  << EOF
-        ${{ secrets.ARIA2_CONF }}
-        EOF
-    - name: Aria2_Downloading_File
-      run: |
-        git clone "https://github.com/${GITHUB_REPOSITORY}.wiki.git"
-        wiki=`echo $GITHUB_REPOSITORY | cut -d "/" -f 2`.wiki
-        cd $wiki
-        mdfile=`git log --pretty=format: -1 --name-only *.md`
-        cd ..
-        aria2c --seed-time=0 -d downloads `cat $wiki/$mdfile | xargs`
-        echo "${mdfile:0:-3}:" > DEST
-    - name: Rclone Synchronizing file
-      run: |
-        rclone copy downloads `cat DEST`
+      - name: Install aria2
+        run: |
+          sudo apt update
+          sudo apt install -y aria2
 
+      - name: Clone Wiki Repository
+        run: |
+          git clone "https://github.com/${GITHUB_REPOSITORY}.wiki.git"
 
+      - name: Find Updated Markdown File
+        id: find_md
+        run: |
+          WIKI_DIR=$(echo $GITHUB_REPOSITORY | cut -d "/" -f 2).wiki
+          cd "$WIKI_DIR"
+          MD_FILE=$(git log --pretty=format: -1 --name-only *.md | grep '\.md$' | head -n1)
+          echo "MD_FILE=$MD_FILE" >> $GITHUB_ENV
+          cd ..
+          echo "Found updated markdown file: $MD_FILE"
+
+      - name: Create downloads directory
+        run: mkdir -p ./downloads
+
+      - name: Download Files with aria2
+        run: |
+          WIKI_DIR=$(echo $GITHUB_REPOSITORY | cut -d "/" -f 2).wiki
+          aria2c \
+            --dir=./downloads \
+            --input-file="$WIKI_DIR/${{ env.MD_FILE }}" \
+            --allow-overwrite=true \
+            --continue=true \
+            --max-concurrent-downloads=3
+
+      - name: List downloaded files
+        run: ls -la ./downloads
+
+      - name: Upload artifact for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-files
+          path: ./downloads/
